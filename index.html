@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flying Drone - Three.js</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: linear-gradient(135deg, #87CEEB 0%, #98FB98 100%);
+            font-family: Arial, sans-serif;
+        }
+        
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 14px;
+            z-index: 100;
+        }
+        
+        #controls h3 {
+            margin: 0 0 10px 0;
+            color: #00ff88;
+        }
+        
+        #info {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 12px;
+            z-index: 100;
+        }
+        
+        .key {
+            background: #333;
+            color: #00ff88;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="controls">
+            <h3>🚁 Drone Controls</h3>
+            <div><span class="key">W/S</span> - Forward/Backward</div>
+            <div><span class="key">A/D</span> - Left/Right</div>
+            <div><span class="key">Q/E</span> - Ascend/Descend</div>
+            <div><span class="key">J/L</span> - Rotate Left/Right</div>
+            <div><span class="key">I/K</span> - Tilt Forward/Backward</div>
+            <div><span class="key">Space</span> - Auto Hover</div>
+        </div>
+        
+        <div id="info">
+            <div>Altitude: <span id="altitude">0</span>m</div>
+            <div>Speed: <span id="speed">0</span> km/h</div>
+            <div>Battery: <span id="battery">100</span>%</div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.Fog(0x87CEEB, 50, 200);
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.setClearColor(0x87CEEB);
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(50, 50, 25);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        directionalLight.shadow.camera.near = 0.1;
+        directionalLight.shadow.camera.far = 200;
+        directionalLight.shadow.camera.left = -50;
+        directionalLight.shadow.camera.right = 50;
+        directionalLight.shadow.camera.top = 50;
+        directionalLight.shadow.camera.bottom = -50;
+        scene.add(directionalLight);
+
+        // Create drone
+        const droneGroup = new THREE.Group();
+        
+        // Drone body
+        const bodyGeometry = new THREE.BoxGeometry(2, 0.3, 0.8);
+        const bodyMaterial = new THREE.MeshPhongMaterial({ color: 0x333333 });
+        const droneBody = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        droneBody.castShadow = true;
+        droneGroup.add(droneBody);
+
+        // Camera gimbal
+        const gimbalGeometry = new THREE.SphereGeometry(0.2);
+        const gimbalMaterial = new THREE.MeshPhongMaterial({ color: 0x666666 });
+        const gimbal = new THREE.Mesh(gimbalGeometry, gimbalMaterial);
+        gimbal.position.set(0, -0.3, 0);
+        gimbal.castShadow = true;
+        droneGroup.add(gimbal);
+
+        // Propeller arms and motors
+        const propellers = [];
+        const motors = [];
+        const armPositions = [
+            { x: 1.2, z: 0.6 },
+            { x: -1.2, z: 0.6 },
+            { x: 1.2, z: -0.6 },
+            { x: -1.2, z: -0.6 }
+        ];
+
+        armPositions.forEach((pos, index) => {
+            // Arm
+            const armGeometry = new THREE.CylinderGeometry(0.05, 0.05, 1.5);
+            const armMaterial = new THREE.MeshPhongMaterial({ color: 0x444444 });
+            const arm = new THREE.Mesh(armGeometry, armMaterial);
+            
+            const angle = Math.atan2(pos.z, pos.x);
+            arm.rotation.z = angle;
+            arm.position.set(pos.x * 0.6, 0, pos.z * 0.6);
+            droneGroup.add(arm);
+
+            // Motor
+            const motorGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.3);
+            const motorMaterial = new THREE.MeshPhongMaterial({ color: 0x222222 });
+            const motor = new THREE.Mesh(motorGeometry, motorMaterial);
+            motor.position.set(pos.x, 0.15, pos.z);
+            motor.castShadow = true;
+            droneGroup.add(motor);
+            motors.push(motor);
+
+            // Propeller
+            const propellerGroup = new THREE.Group();
+            
+            // Propeller blades
+            for (let i = 0; i < 2; i++) {
+                const bladeGeometry = new THREE.BoxGeometry(0.8, 0.02, 0.1);
+                const bladeMaterial = new THREE.MeshPhongMaterial({ 
+                    color: 0x888888,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const blade = new THREE.Mesh(bladeGeometry, bladeMaterial);
+                blade.rotation.y = i * Math.PI;
+                propellerGroup.add(blade);
+            }
+            
+            propellerGroup.position.set(pos.x, 0.35, pos.z);
+            droneGroup.add(propellerGroup);
+            propellers.push(propellerGroup);
+        });
+
+        // LED lights
+        const ledPositions = [
+            { x: 0.8, y: 0, z: 0.3, color: 0x00ff00 },
+            { x: -0.8, y: 0, z: 0.3, color: 0xff0000 },
+            { x: 0.8, y: 0, z: -0.3, color: 0x0000ff },
+            { x: -0.8, y: 0, z: -0.3, color: 0xffff00 }
+        ];
+
+        ledPositions.forEach(led => {
+            const ledGeometry = new THREE.SphereGeometry(0.05);
+            const ledMaterial = new THREE.MeshPhongMaterial({ 
+                color: led.color,
+                emissive: led.color,
+                emissiveIntensity: 0.5
+            });
+            const ledMesh = new THREE.Mesh(ledGeometry, ledMaterial);
+            ledMesh.position.set(led.x, led.y, led.z);
+            droneGroup.add(ledMesh);
+        });
+
+        droneGroup.position.set(0, 5, 0);
+        droneGroup.castShadow = true;
+        scene.add(droneGroup);
+
+        // Ground
+        const groundGeometry = new THREE.PlaneGeometry(200, 200);
+        const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x90EE90 });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Trees for environment
+        for (let i = 0; i < 20; i++) {
+            const treeGroup = new THREE.Group();
+            
+            // Trunk
+            const trunkGeometry = new THREE.CylinderGeometry(0.2, 0.3, 4);
+            const trunkMaterial = new THREE.MeshPhongMaterial({ color: 0x8B4513 });
+            const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
+            trunk.position.y = 2;
+            trunk.castShadow = true;
+            treeGroup.add(trunk);
+            
+            // Leaves
+            const leavesGeometry = new THREE.SphereGeometry(2);
+            const leavesMaterial = new THREE.MeshPhongMaterial({ color: 0x228B22 });
+            const leaves = new THREE.Mesh(leavesGeometry, leavesMaterial);
+            leaves.position.y = 5;
+            leaves.castShadow = true;
+            treeGroup.add(leaves);
+            
+            const x = (Math.random() - 0.5) * 180;
+            const z = (Math.random() - 0.5) * 180;
+            treeGroup.position.set(x, 0, z);
+            scene.add(treeGroup);
+        }
+
+        // Drone physics and controls
+        const droneState = {
+            velocity: new THREE.Vector3(0, 0, 0),
+            rotation: new THREE.Euler(0, 0, 0),
+            targetRotation: new THREE.Euler(0, 0, 0),
+            thrust: 0,
+            hovering: false,
+            battery: 100
+        };
+
+        const keys = {};
+        
+        document.addEventListener('keydown', (event) => {
+            keys[event.code] = true;
+        });
+        
+        document.addEventListener('keyup', (event) => {
+            keys[event.code] = false;
+        });
+
+        // Camera follow system
+        const cameraOffset = new THREE.Vector3(0, 5, 10);
+        const cameraTarget = new THREE.Vector3();
+
+        function updateDrone() {
+            const moveSpeed = 0.05;
+            const rotSpeed = 0.02;
+            const dampening = 0.95;
+            
+            // Handle input
+            if (keys['KeyW']) {
+                const forward = new THREE.Vector3(0, 0, -moveSpeed);
+                forward.applyQuaternion(droneGroup.quaternion);
+                droneState.velocity.add(forward);
+                droneState.targetRotation.x = -0.2;
+            }
+            if (keys['KeyS']) {
+                const backward = new THREE.Vector3(0, 0, moveSpeed);
+                backward.applyQuaternion(droneGroup.quaternion);
+                droneState.velocity.add(backward);
+                droneState.targetRotation.x = 0.2;
+            }
+            if (keys['KeyA']) {
+                const left = new THREE.Vector3(-moveSpeed, 0, 0);
+                left.applyQuaternion(droneGroup.quaternion);
+                droneState.velocity.add(left);
+                droneState.targetRotation.z = 0.3;
+            }
+            if (keys['KeyD']) {
+                const right = new THREE.Vector3(moveSpeed, 0, 0);
+                right.applyQuaternion(droneGroup.quaternion);
+                droneState.velocity.add(right);
+                droneState.targetRotation.z = -0.3;
+            }
+            if (keys['KeyQ']) {
+                droneState.velocity.y += moveSpeed * 0.8;
+                droneState.thrust = 1;
+            }
+            if (keys['KeyE']) {
+                droneState.velocity.y -= moveSpeed * 0.8;
+                droneState.thrust = -0.5;
+            }
+            if (keys['KeyJ']) {
+                droneState.targetRotation.y += rotSpeed;
+            }
+            if (keys['KeyL']) {
+                droneState.targetRotation.y -= rotSpeed;
+            }
+            if (keys['KeyI']) {
+                droneState.targetRotation.x -= rotSpeed;
+            }
+            if (keys['KeyK']) {
+                droneState.targetRotation.x += rotSpeed;
+            }
+            if (keys['Space']) {
+                droneState.hovering = !droneState.hovering;
+                keys['Space'] = false; // Prevent continuous toggling
+            }
+
+            // Auto-hover mode
+            if (droneState.hovering) {
+                droneState.velocity.y *= 0.9;
+                if (droneGroup.position.y < 5) {
+                    droneState.velocity.y += 0.01;
+                } else if (droneGroup.position.y > 5) {
+                    droneState.velocity.y -= 0.01;
+                }
+            }
+
+            // Apply gravity
+            if (!droneState.hovering) {
+                droneState.velocity.y -= 0.005;
+            }
+
+            // Smooth rotation
+            droneGroup.rotation.x += (droneState.targetRotation.x - droneGroup.rotation.x) * 0.1;
+            droneGroup.rotation.y += (droneState.targetRotation.y - droneGroup.rotation.y) * 0.1;
+            droneGroup.rotation.z += (droneState.targetRotation.z - droneGroup.rotation.z) * 0.1;
+
+            // Reset rotation targets
+            if (!keys['KeyW'] && !keys['KeyS']) {
+                droneState.targetRotation.x *= 0.9;
+            }
+            if (!keys['KeyA'] && !keys['KeyD']) {
+                droneState.targetRotation.z *= 0.9;
+            }
+
+            // Apply velocity dampening
+            droneState.velocity.multiplyScalar(dampening);
+
+            // Update position
+            droneGroup.position.add(droneState.velocity);
+
+            // Ground collision
+            if (droneGroup.position.y < 0.5) {
+                droneGroup.position.y = 0.5;
+                droneState.velocity.y = 0;
+            }
+
+            // Animate propellers
+            const propellerSpeed = Math.abs(droneState.velocity.length()) + Math.abs(droneState.thrust) + 0.2;
+            propellers.forEach((propeller, index) => {
+                const direction = (index % 2 === 0) ? 1 : -1;
+                propeller.rotation.y += propellerSpeed * direction;
+                
+                // Propeller blur effect
+                propeller.children.forEach(blade => {
+                    blade.material.opacity = Math.max(0.1, 0.8 - propellerSpeed * 0.3);
+                });
+            });
+
+            // Update camera
+            const idealCameraPosition = new THREE.Vector3();
+            idealCameraPosition.copy(droneGroup.position).add(
+                cameraOffset.clone().applyQuaternion(droneGroup.quaternion)
+            );
+            
+            camera.position.lerp(idealCameraPosition, 0.05);
+            cameraTarget.copy(droneGroup.position);
+            camera.lookAt(cameraTarget);
+
+            // Update UI
+            const altitude = Math.max(0, droneGroup.position.y - 0.5);
+            const speed = droneState.velocity.length() * 50; // Convert to km/h approximation
+            
+            document.getElementById('altitude').textContent = altitude.toFixed(1);
+            document.getElementById('speed').textContent = speed.toFixed(1);
+            
+            // Battery drain simulation
+            if (Object.values(keys).some(key => key)) {
+                droneState.battery = Math.max(0, droneState.battery - 0.01);
+            }
+            document.getElementById('battery').textContent = droneState.battery.toFixed(0);
+
+            droneState.thrust *= 0.8;
+        }
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            updateDrone();
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start animation
+        animate();
+    </script>
+</body>
+</html>
